@@ -1,3 +1,5 @@
 jsonpickle
 pandas
 matplotlib
+prosperity4btx
+numpy
