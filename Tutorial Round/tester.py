@@ -54,40 +54,27 @@ trades = load_trades(
 prices["best_bid"] = prices["bid_price_1"]
 prices["best_ask"] = prices["ask_price_1"]
 
-# Use raw timestamp for a single-day view
-prices["time"] = prices["timestamp"]
+# Build one continuous timeline across all loaded days so filtering by MAX_TIME
+# means "first X time units across the combined data".
+DAY_SPAN = max(prices["timestamp"].max(), trades["timestamp"].max()) + 100
+min_day = min(prices["day"].min(), trades["day"].min())
 
-# Use raw timestamp for trades as well
-trades["time"] = trades["timestamp"]
+prices["time"] = (prices["day"] - min_day) * DAY_SPAN + prices["timestamp"]
+trades["time"] = (trades["day"] - min_day) * DAY_SPAN + trades["timestamp"]
 
-MAX_TIMESTAMP = 400_000
-TARGET_DAY = -1
+MAX_TIME = 2_100_000
 
 emerald_prices = prices[
-    (prices["product"] == "EMERALDS")
-    & (prices["day"] == TARGET_DAY)
-    & (prices["timestamp"] <= MAX_TIMESTAMP)
+    (prices["product"] == "EMERALDS") & (prices["time"] <= MAX_TIME)
 ]
 
 
-tomato_prices = prices[
-    (prices["product"] == "TOMATOES")
-    & (prices["day"] == TARGET_DAY)
-    & (prices["timestamp"] <= MAX_TIMESTAMP)
-]
+tomato_prices = prices[(prices["product"] == "TOMATOES") & (prices["time"] <= MAX_TIME)]
 
-emerald_trades = trades[
-    (trades["symbol"] == "EMERALDS")
-    & (trades["day"] == TARGET_DAY)
-    & (trades["timestamp"] <= MAX_TIMESTAMP)
-]
+emerald_trades = trades[(trades["symbol"] == "EMERALDS") & (trades["time"] <= MAX_TIME)]
 
 
-tomato_trades = trades[
-    (trades["symbol"] == "TOMATOES")
-    & (trades["day"] == TARGET_DAY)
-    & (trades["timestamp"] <= MAX_TIMESTAMP)
-]
+tomato_trades = trades[(trades["symbol"] == "TOMATOES") & (trades["time"] <= MAX_TIME)]
 
 
 def plot_bid_ask_scatter(df, product_name, filename, trades_df=None):
