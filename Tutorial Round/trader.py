@@ -1,5 +1,5 @@
 from datamodel import Order, OrderDepth, TradingState
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 import json
 import numpy as np
 
@@ -69,6 +69,37 @@ class Helper:
                 return "mean_reversion"
         return "neutral"
 
+    def manage_position(
+        self,
+        signal: float,
+        current_position: int,
+        position_limit: int,
+        aggression: float,
+        market: MarketView,
+        expected_movement: float,
+    ) -> List[Order]:
+        target_position = int(signal * aggression)
+        target_position = max(
+            min(target_position, position_limit), -position_limit
+        )  # ensure target is within limits
+        position_diff = target_position - current_position
+        om = OrderManager(market.product, current_position, position_limit)
+        spread = (
+            market.best_ask - market.best_bid
+            if market.best_bid is not None and market.best_ask is not None
+            else 0
+        )
+        cost = spread / 2
+        cost_const = 1.5
+
+        if expected_movement > cost_const * cost:
+            if position_diff > 0 and market.best_ask is not None:
+                om.buy(market.best_ask, min(position_diff, market.best_ask_volume))
+            elif position_diff < 0 and market.best_bid is not None:
+                om.sell(market.best_bid, min(-position_diff, market.best_bid_volume))
+
+        return om.get_orders()
+
 
 class OrderManager:
     def __init__(self, product: str, position: int, position_limit: int):
@@ -103,7 +134,7 @@ class OrderManager:
 
 
 class BaseStrategy:
-    def generate_orders(
+    def generate_signal(
         self,
         product: str,
         market: MarketView,
@@ -112,13 +143,13 @@ class BaseStrategy:
         state: TradingState,
         trader_state: dict,
         helper: Helper,
-    ) -> List[Order]:
-        return []
+    ) -> Tuple[float, float, float]:
+        return (0, 0, 0)
 
 
 class MR_MomentumStrategy(BaseStrategy):
 
-    def generate_orders(
+    def generate_signal(
         self,
         product: str,
         market: MarketView,
@@ -127,21 +158,24 @@ class MR_MomentumStrategy(BaseStrategy):
         state: TradingState,
         trader_state: dict,
         helper: Helper,
-    ) -> List[Order]:
-        om = OrderManager(product, position, position_limit)
-
+    ) -> Tuple[float, float, float]:
+        MR_AGGRESSION = 3
+        MOM_AGGRESSION = 8
         mid_prices = trader_state.get("tomatoes_mid_prices", [])
         spread_history = trader_state.get("tomatoes_spread_history", [])
+
+        if market.mid_price is None:
+            return (0, 0, 0)
+
         current_mid_price = market.mid_price
-        current_spread = spread_history[-1] if spread_history else None
 
         if len(mid_prices) < 30 or len(spread_history) < 30:
-            return []
+            return (0, 0, 0)
 
         rolling_mid_price_mean = np.mean(mid_prices[-20:])
         rolling_std = np.std(mid_prices[-30:])
         z_score = (
-            (current_mid_price - rolling_mid_price_mean) / rolling_std
+            ((current_mid_price - rolling_mid_price_mean) / rolling_std)
             if rolling_std > 0
             else 0
         )
@@ -152,19 +186,16 @@ class MR_MomentumStrategy(BaseStrategy):
         )
 
         regime = helper.check_regime(z_score, trend_score)
-        if market.best_bid is not None and market.best_ask is not None:
-            if regime == "mean_reversion":
-                if z_score > 0:
-                    om.sell(market.best_bid, market.best_bid_volume)
-                elif z_score < 0:
-                    om.buy(market.best_ask, market.best_ask_volume)
-            elif regime == "momentum":
-                if trend_score > 0:
-                    om.buy(market.best_ask, market.best_ask_volume)
-                elif trend_score < 0:
-                    om.sell(market.best_bid, market.best_bid_volume)
 
-        return om.get_orders()
+        if regime == "mean_reversion":
+            expected_movement = abs(z_score) * rolling_std
+            return (-z_score, MR_AGGRESSION, float(expected_movement))
+        elif regime == "momentum":
+            expected_movement = abs(trend_score) * rolling_std
+            return (0, 0, 0)
+            return (trend_score, MOM_AGGRESSION, float(expected_movement))
+
+        return (0, 0, 0)
 
 
 class Trader:
@@ -197,13 +228,13 @@ class Trader:
         helper = Helper()
 
         # Initialize trader state if empty
-        if isinstance(trader_state, dict) and not trader_state:
-            trader_state = {
-                "tomatoes_mid_prices": [],
-                "tomatoes_spread_history": [],
-            }
+        if "tomatoes_mid_prices" not in trader_state:
+            trader_state["tomatoes_mid_prices"] = []
+        if "tomatoes_spread_history" not in trader_state:
+            trader_state["tomatoes_spread_history"] = []
 
         for product, order_depth in state.order_depths.items():
+            result[product] = []
             position = state.position.get(product, 0)
             position_limit = self.POSITION_LIMITS.get(product, 0)
             market = MarketView(product, order_depth)
@@ -213,10 +244,10 @@ class Trader:
 
             strategy = self.strategies.get(product)
             if strategy is None:
-                result[product] = []
+                signal = 0
                 continue
 
-            orders = strategy.generate_orders(
+            signal, aggression, expected_movement = strategy.generate_signal(
                 product=product,
                 market=market,
                 position=position,
@@ -225,7 +256,15 @@ class Trader:
                 trader_state=trader_state,
                 helper=helper,
             )
-            result[product] = orders
+
+            result[product] = helper.manage_position(
+                signal,
+                position,
+                position_limit,
+                aggression,
+                market=market,
+                expected_movement=expected_movement,
+            )
 
         conversions = 0
         next_trader_data = self.dump_trader_state(trader_state)

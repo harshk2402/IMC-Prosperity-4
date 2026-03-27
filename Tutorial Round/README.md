@@ -14,3 +14,12 @@
 | **Modeling**         | Empirical λ from trades<br>(fill timing)                               | Rolling stats (MA, std, trend)                                    |
 | **Endgame**          | Stop if time_left < exit time<br>force flatten                         | Reduce exposure, follow trend                                     |
 | **Key Principle**    | Best price that still fills                                            | Detect when MR fails → follow momentum                            |
+
+**Target Pipeline**
+
+1. build current market state
+2. compute a reference / fair
+3. decide what kind of opportunity exists
+4. first take obviously favorable quotes
+5. then place passive quotes around the desired side / fair
+6. keep everything inventory-safe
