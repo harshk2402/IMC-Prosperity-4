@@ -12,6 +12,13 @@ class MarketView:
         self.buy_orders = order_depth.buy_orders
         self.sell_orders = order_depth.sell_orders
 
+        self.bid_levels = sorted(
+            [(price, volume) for price, volume in self.buy_orders.items()], reverse=True
+        )
+        self.ask_levels = sorted(
+            [(price, volume) for price, volume in self.sell_orders.items()]
+        )
+
         self.best_bid = max(self.buy_orders.keys()) if self.buy_orders else None
         self.best_ask = min(self.sell_orders.keys()) if self.sell_orders else None
 
@@ -22,11 +29,51 @@ class MarketView:
             -self.sell_orders[self.best_ask] if self.best_ask is not None else 0
         )
 
+        self.total_bid_volume = sum(self.buy_orders.values())
+        self.total_ask_volume = -sum(self.sell_orders.values())
+        self.bid_ask_imbalance = (
+            (
+                (self.total_bid_volume - self.total_ask_volume)
+                / (self.total_bid_volume + self.total_ask_volume)
+            )
+            if self.total_bid_volume + self.total_ask_volume > 0
+            else 0
+        )
+        self.top_of_book_imbalance = (
+            (
+                (self.best_bid_volume - self.best_ask_volume)
+                / (self.best_bid_volume + self.best_ask_volume)
+            )
+            if self.best_bid_volume + self.best_ask_volume > 0
+            else 0
+        )
+
+        self.spread = (
+            self.best_ask - self.best_bid
+            if self.best_bid is not None and self.best_ask is not None
+            else None
+        )
+
+        self.vwap_bid_top_n = self.calculate_vwap(self.bid_levels, n=5)
+        self.vwap_ask_top_n = self.calculate_vwap(
+            self.ask_levels, n=5
+        )  # 5 is arbitrary, can be tuned
+
     @property
     def mid_price(self) -> Optional[float]:
         if self.best_bid is not None and self.best_ask is not None:
             return (self.best_bid + self.best_ask) / 2
         return None
+
+    def calculate_vwap(self, levels: List[Tuple[int, int]], n: int) -> Optional[float]:
+        if not levels:
+            return None
+        top_levels = levels[:n]
+        total_volume = sum(abs(volume) for price, volume in top_levels)
+        if total_volume == 0:
+            return None
+        vwap = sum(price * abs(volume) for price, volume in top_levels) / total_volume
+        return vwap
 
 
 class Helper:
